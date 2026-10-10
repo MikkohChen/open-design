@@ -36,9 +36,51 @@ concurrency:
 jobs:
   bake:
     name: Bake plugin previews
+    # Upstream publishes by default; forks must deliberately opt in.
+    if: ${{ github.repository == 'nexu-io/open-design' || vars.PREVIEW_PUBLISH_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
+      - name: Check publication configuration before rendering
+        if: ${{ github.ref == 'refs/heads/main' }}
+        shell: bash
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_REPOSITORY_ASSETS_AK }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_REPOSITORY_ASSETS_SK }}
+          R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_REPOSITORY_ASSETS_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_REPOSITORY_ASSETS_URL }}
+          RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
+          RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import sys
+          from urllib.parse import urlsplit
+
+          required = (
+              "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
+              "R2_ENDPOINT", "RELEASE_BOT_APP_ID", "RELEASE_BOT_PRIVATE_KEY",
+          )
+          missing = [name for name in required if not os.environ.get(name, "").strip()]
+          if missing:
+              print("::error::Missing publication configuration: " + ", ".join(missing))
+              sys.exit(1)
+          try:
+              endpoint = urlsplit(os.environ["R2_ENDPOINT"])
+              valid = (
+                  endpoint.scheme == "https" and bool(endpoint.hostname)
+                  and endpoint.username is None and endpoint.password is None
+                  and not endpoint.query and not endpoint.fragment
+                  and endpoint.path in ("", "/")
+              )
+          except ValueError:
+              valid = False
+          if not valid:
+              print("::error::R2_ENDPOINT must be an HTTPS S3 API origin without credentials, path, query, or fragment.")
+              sys.exit(1)
+          print("Publication configuration present; credential permissions are verified by upload.")
+          PY
+
       - name: Checkout
         uses: actions/checkout@v6.0.2
         with:
